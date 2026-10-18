@@ -8473,9 +8473,23 @@ impl CraftNexusContract {
     /// Derived purely from the operator's `expired_dispute_fee_policy`, so the
     /// outcome of letting a dispute time out is knowable in advance and cannot
     /// be influenced by whoever happens to call `resolve_expired_dispute`.
-    pub fn get_timeout_outcome(env: Env) -> TimeoutOutcome {
-        let config = Self::get_platform_config_internal(&env);
-        Self::timeout_outcome(config.expired_dispute_fee_policy)
+    ///
+    /// # Errors
+    /// * [`Error::PlatformNotInitialized`] if the platform config is missing
+    ///   (not yet initialized, or lost to a partial migration) or unreadable,
+    ///   instead of trapping the host.
+    pub fn get_timeout_outcome(env: Env) -> Result<TimeoutOutcome, Error> {
+        let stored: Val = env
+            .storage()
+            .instance()
+            .get(&DataKey::PlatformConfig)
+            .ok_or(Error::PlatformNotInitialized)?;
+        let config = PlatformConfig::try_from_val(&env, &stored)
+            .map_err(|_| Error::PlatformNotInitialized)?;
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTENSION);
+        Ok(Self::timeout_outcome(config.expired_dispute_fee_policy))
     }
 
     /// Read the configured escalation checkpoint schedule (#1080).
