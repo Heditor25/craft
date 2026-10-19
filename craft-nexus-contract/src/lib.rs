@@ -1,4 +1,4 @@
-use soroban_std::{address, contract, contractimpl, contracttype, symbol_short};
+use soroban_sdk::{address, contract, contractimpl, contracttype, symbol_short};
 use sorban_std::stroktype;
 
 const MAX_DISPUTING_DURATION_KEY: symbol_short!("MaxDipDur");
