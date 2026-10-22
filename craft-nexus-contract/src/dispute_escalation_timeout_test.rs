@@ -406,7 +406,7 @@ fn admin_can_reschedule_the_checkpoints() {
     h.escrow
         .set_escalation_checkpoints(&(DAY as u32), &(2 * DAY as u32), &(4 * DAY as u32));
 
-    let checkpoints = h.escrow.get_escalation_checkpoints();
+    let checkpoints = h.escrow.get_escalation_checkpoints().unwrap();
     assert_eq!(checkpoints.party_checkpoint, DAY as u32);
     assert_eq!(checkpoints.moderator_checkpoint, 2 * DAY as u32);
     assert_eq!(checkpoints.admin_checkpoint, 4 * DAY as u32);
@@ -461,7 +461,7 @@ fn non_monotonic_checkpoints_are_rejected() {
     );
 
     // None of the rejected calls may have mutated the schedule.
-    let checkpoints = h.escrow.get_escalation_checkpoints();
+    let checkpoints = h.escrow.get_escalation_checkpoints().unwrap();
     assert_eq!(
         checkpoints.party_checkpoint,
         DEFAULT_DISPUTE_ESCALATION_WINDOW
@@ -478,7 +478,7 @@ fn setting_the_legacy_window_keeps_later_checkpoints_ordered() {
     // Push tier 1 past the default tier-2 and tier-3 offsets.
     h.escrow.set_dispute_escalation_window(&(20 * DAY as u32));
 
-    let checkpoints = h.escrow.get_escalation_checkpoints();
+    let checkpoints = h.escrow.get_escalation_checkpoints().unwrap();
     assert_eq!(checkpoints.party_checkpoint, 20 * DAY as u32);
     assert_eq!(checkpoints.moderator_checkpoint, 20 * DAY as u32);
     assert_eq!(checkpoints.admin_checkpoint, 20 * DAY as u32);
@@ -494,6 +494,28 @@ fn setting_the_legacy_window_keeps_later_checkpoints_ordered() {
         h.escrow.get_dispute_escalation_status(&1).current_tier,
         EscalationTier::AdminReview
     );
+}
+
+#[test]
+fn missing_checkpoint_schedule_is_safe_before_and_after_terminal_state() {
+    let h = Harness::new();
+    assert_eq!(h.escrow.get_escalation_checkpoints(), None);
+
+    h.escrow
+        .set_escalation_checkpoints(&(DAY as u32), &(2 * DAY as u32), &(4 * DAY as u32));
+    h.dispute(1);
+    h.warp_to(3 * DAY);
+    h.escrow
+        .resolve_dispute(&1, &Resolution::RefundToBuyer, &h.arbitrator);
+    assert_eq!(h.escrow.get_escrow(&1).status, EscrowStatus::Resolved);
+
+    h.env.as_contract(&h.escrow.address, || {
+        h.env
+            .storage()
+            .persistent()
+            .remove(&DataKey::EscalationCheckpoints);
+    });
+    assert_eq!(h.escrow.get_escalation_checkpoints(), None);
 }
 
 // ── Criterion 3: a timed-out dispute cannot be resolved twice ─────────────────
@@ -563,6 +585,32 @@ fn timeout_settlement_is_rejected_before_the_final_deadline() {
         Error::DisputeExpired,
     );
     assert_eq!(h.escrow.get_escrow(&1).status, EscrowStatus::Disputed);
+}
+
+#[test]
+fn timeout_outcome_returns_typed_error_when_config_is_missing() {
+    let env = Env::default();
+    let escrow_id = env.register_contract(None, CraftNexusContract);
+    let escrow = CraftNexusContractClient::new(&env, &escrow_id);
+
+    assert_typed_error(
+        escrow.try_get_timeout_outcome(),
+        Error::PlatformNotInitialized,
+    );
+}
+
+#[test]
+fn timeout_outcome_is_still_readable_after_a_terminal_state() {
+    let h = Harness::new();
+    h.dispute(1);
+    h.warp_to(DEFAULT_MAX_DISPUTE_DURATION as u64);
+    h.escrow.resolve_expired_dispute(&1);
+    assert_eq!(h.escrow.get_escrow(&1).status, EscrowStatus::Resolved);
+
+    assert_eq!(
+        h.escrow.get_timeout_outcome(),
+        TimeoutOutcome::RefundBuyerFull
+    );
 }
 
 #[test]
